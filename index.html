@@ -68,7 +68,7 @@ input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 
 .chip.here { border-color: var(--accent); color: var(--accent); }
 .chip span { font-family: var(--font); color: var(--muted); max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
 .editor {
-  position: absolute; z-index: 5; margin: 0; resize: none; overflow: hidden;
+  position: absolute; z-index: 5; margin: 0; resize: none; overflow-y: auto; -webkit-overflow-scrolling: touch;
   font-family: var(--font); font-weight: 600; line-height: 1.2; color: #fff; caret-color: var(--accent);
   background: rgba(10,12,14,.85); border: 0; border-left: 4px solid var(--accent); border-radius: 6px;
   outline: 2px dashed rgba(255,255,255,.75); outline-offset: 2px;
@@ -339,10 +339,21 @@ input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 
     const fs = t.f * W, pad = fs * 0.4, edge = Math.max(3, fs * 0.2);
     g.font = FONT.replace('{px}', fs);
     const w = Math.min(t.w * W, W);
-    const lines = wrap(g, t.s, w - pad * 2 - edge);
-    const h = Math.max((t.h || 0) * H, lines.length * fs * 1.2 + pad * 2);
+    const inner = w - pad * 2 - edge, lh = fs * 1.2;
+    let lines = wrap(g, t.s, inner);
+    const h = Math.min(H, Math.max((t.h || 0) * H, lh * 3 + pad * 2, lh + pad * 2));   // the box keeps its size
+    const fit = Math.max(1, Math.floor((h - pad * 2) / lh));
+    let more = false;
+    if (lines.length > fit) {                       // long note: show what fits, the rest opens on tap
+      more = true; lines = lines.slice(0, fit);
+      let last = lines[fit - 1];
+      const tagW = g.measureText(' … more').width;
+      while (last.length && g.measureText(last).width + tagW > inner) last = last.slice(0, -1);
+      if (last.length < lines[fit - 1].length && last.includes(' ')) last = last.slice(0, last.lastIndexOf(' '));   // break at a word
+      lines[fit - 1] = last.replace(/\s+$/, '');
+    }
     const x = Math.min(Math.max(0, t.x * W), W - w), y = Math.min(Math.max(0, t.y * H), H - h);
-    return { x, y, w, h, lines, fs, pad, edge };
+    return { x, y, w, h, lines, fs, pad, edge, more };
   }
   function paintNote(g, t, W, H) {
     const b = noteBox(g, t, W, H);
@@ -351,6 +362,10 @@ input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 
     g.fillStyle = t.c; g.fillRect(b.x, b.y, b.edge, b.h);
     g.fillStyle = '#fff'; g.textBaseline = 'top';
     b.lines.forEach((l, i) => g.fillText(l, b.x + b.edge + b.pad, b.y + b.pad + i * b.fs * 1.2));
+    if (b.more) {
+      const i = b.lines.length - 1, lx = b.x + b.edge + b.pad + g.measureText(b.lines[i]).width;
+      g.fillStyle = '#ffd23f'; g.fillText(' … more', lx, b.y + b.pad + i * b.fs * 1.2);
+    }
   }
   function paintStroke(g, s, W, H) {
     if (!s.p.length) return;
@@ -550,7 +565,8 @@ input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 
     ed.style.fontSize = fs + 'px'; ed.style.padding = (fs * 0.4) + 'px'; ed.style.borderLeftColor = t.c;
     ed.style.width = w + 'px'; ed.style.left = x + 'px';
     ed.style.height = 'auto';
-    const h = Math.max((t.h || 0) * H, ed.scrollHeight, fs * 2);
+    const lh = fs * 1.2, pad = fs * 0.4;
+    const h = Math.min(H, Math.max((t.h || 0) * H, lh * 3 + pad * 2, ed.scrollHeight));
     const y = Math.min(Math.max(0, t.y * H), Math.max(0, H - h));
     ed.style.top = y + 'px'; ed.style.height = h + 'px';
     const bar = $('editbar'), bh = bar.offsetHeight || 48, bw = bar.offsetWidth || 170;
@@ -560,6 +576,7 @@ input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 
   function startEdit(t, isNew) {
     if (S.edit) commitEdit();
     S.sel = null; checkpoint();
+    S.late = null;
     S.edit = { t, f: S.frame, isNew };
     ed.value = t.s; ed.hidden = false; $('editbar').hidden = false;
     placeEditor(); draw();
@@ -580,12 +597,19 @@ input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 
   function commitEdit() {
     if (!S.edit) return;
     syncEdit();
-    const f = S.edit.f; S.edit = null;
+    const f = S.edit.f; S.late = { t: S.edit.t, f, until: Date.now() + 5000 }; S.edit = null;
     ed.hidden = true; $('editbar').hidden = true; ed.blur();
     dropIfUnchanged(f); draw(); renderNotes();
     setTimeout(layout, 350);
   }
-  ed.addEventListener('input', () => { syncEdit(); placeEditor(); });
+  ed.addEventListener('input', () => {
+    if (S.edit) { syncEdit(); placeEditor(); return; }
+    const L = S.late;                       // dictation finishing after Done: keep those words too
+    if (L && Date.now() < L.until) {
+      const n = ensure(L.f), val = ed.value.replace(/\s+$/, '');
+      if (val && val !== L.t.s) { L.t.s = val; if (!n.texts.includes(L.t)) n.texts.push(L.t); renderNotes(); draw(); save(); }
+    }
+  });
   ed.addEventListener('blur', () => setTimeout(() => { if (S.edit && document.activeElement !== ed) commitEdit(); }, 120));
   $('editDone').addEventListener('pointerdown', e => { e.preventDefault(); commitEdit(); });
   $('editDelete').addEventListener('pointerdown', e => { e.preventDefault(); if (!S.edit) return; ed.value = ''; commitEdit(); });

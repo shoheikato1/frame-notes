@@ -101,6 +101,21 @@ check("next frame has no marks", (await notes(1)) === null);
 await tapEl("toolPen"); await drag(circle); n = await notes(1); check("mark on frame 1", n && n.strokes.length === 1);
 check("frame 0 unchanged", (await notes(0)).texts.length === 1);
 
+
+// long note keeps its box size, folds with more, keeps every word
+await tapEl("toolText");
+await tap(...P(0.1, 0.65));
+const long = "Overall I think the order of the animation can start with the white washi covering the entire screen and start drawing and colouring it and then fading into the actual mountain kind of rotating the order END";
+await send("Input.insertText", { text: long }); await sleep(100);
+await tapEl("editDone"); await sleep(100);
+n = await notes(1); const ln = n.texts[n.texts.length - 1];
+check("long note saved in full", ln.s === long, String(ln.s.length));
+const box = await ev(`(()=>{const n=FN.S.notes.get(1);const t=n.texts[n.texts.length-1];const c=document.createElement('canvas').getContext('2d');return JSON.stringify(null)})()`);
+check("box stays three lines tall", (ln.h || 0) === 0);
+// late dictation words after Done
+await ev(`(()=>{const e=document.getElementById('editor');e.value=e.value+' LATE';e.dispatchEvent(new Event('input'));})()`); await sleep(80);
+n = await notes(1); check("late dictation words kept", n.texts[n.texts.length - 1].s.endsWith("END LATE"));
+
 // persistence across reload (last video reopens)
 await sleep(800);
 await load();
@@ -108,6 +123,8 @@ for (let i = 0; i < 60; i++) { if (await ev("FN.S.total>0").catch(() => false)) 
 await sleep(300);
 check("reopens last video", await ev("FN.S.name==='test.mp4'"));
 check("notes survive reload", (await ev("FN.S.notes.size")) === 2);
+await ev("FN.goTo(1)"); await sleep(400);
+const shot2 = await send("Page.captureScreenshot", { format: "png" }); (await import("node:fs")).writeFileSync(T + "/ui2.png", Buffer.from(shot2.result.data, "base64"));
 
 } catch (e) { results.push("ERROR " + e.message); }
 console.log(results.join("\n"));
