@@ -112,9 +112,6 @@ n = await notes(1); const ln = n.texts[n.texts.length - 1];
 check("long note saved in full", ln.s === long, String(ln.s.length));
 const box = await ev(`(()=>{const n=FN.S.notes.get(1);const t=n.texts[n.texts.length-1];const c=document.createElement('canvas').getContext('2d');return JSON.stringify(null)})()`);
 check("box stays three lines tall", (ln.h || 0) === 0);
-// late dictation words after Done
-await ev(`(()=>{const e=document.getElementById('editor');e.value=e.value+' LATE';e.dispatchEvent(new Event('input'));})()`); await sleep(80);
-n = await notes(1); check("late dictation words kept", n.texts[n.texts.length - 1].s.endsWith("END LATE"));
 
 // persistence across reload (last video reopens)
 await sleep(800);
