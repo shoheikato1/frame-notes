@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Frame Notes">
+<meta name="theme-color" content="#121417">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Frame Notes</title>
+<style>
+/* One screen, phone first: top bar, the frame (video + drawing layer), transport, tools, notes strip. */
+:root {
+  --bg: #121417; --panel: #1c2026; --line: #2d333c; --fg: #eceff2; --muted: #8e97a4;
+  --accent: #ff4d4d; --ok: #5fd08a; --warn: #f2b84b;
+  --font: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.35 var(--font);
+  position: fixed; inset: 0; overflow: hidden;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+.app {
+  height: 100%; display: flex; flex-direction: column; gap: 8px; max-width: 760px; margin: 0 auto;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) max(10px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 8px) max(10px, env(safe-area-inset-left, 0px));
+}
+.row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.top h1 { font-size: 16px; font-weight: 650; margin: 0; white-space: nowrap; }
+.file { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.status.ok { color: var(--ok); } .status.warn { color: var(--warn); }
+button, select, label.btn {
+  font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 12px; min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  touch-action: manipulation; cursor: pointer; white-space: nowrap;
+}
+button:active { filter: brightness(1.3); }
+button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+button:disabled { opacity: .35; }
+.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.frame { position: relative; transform-origin: 0 0; background: #000; touch-action: none; }
+.frame video, .frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.frame video { object-fit: fill; pointer-events: none; }
+.frame canvas { touch-action: none; }
+.empty { text-align: center; color: var(--muted); display: flex; flex-direction: column; gap: 14px; align-items: center; max-width: 32ch; }
+.empty strong { color: var(--fg); font-size: 18px; }
+.counter { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 14px; min-width: 7ch; text-align: right; line-height: 1.2; }
+.counter small { color: var(--muted); font-size: 11px; }
+input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); height: 34px; }
+.tools { flex-wrap: wrap; }
+.tools .grow { flex: 1; }
+.swatch { width: 40px; padding: 0; }
+.swatch i { width: 18px; height: 18px; border-radius: 50%; display: block; box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--line); }
+.swatch[aria-pressed="true"] { background: var(--panel); border-color: var(--fg); }
+.notes { display: flex; gap: 6px; overflow-x: auto; min-height: 38px; align-items: center; scrollbar-width: none; }
+.notes::-webkit-scrollbar { display: none; }
+.notes .label { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.chip { font-family: var(--mono); font-size: 13px; padding: 5px 10px; min-height: 34px; border-radius: 999px; }
+.chip.here { border-color: var(--accent); color: var(--accent); }
+.chip span { font-family: var(--font); color: var(--muted); max-width: 14ch; overflow: hidden; text-overflow: ellipsis; }
+.editor {
+  position: absolute; z-index: 5; margin: 0; resize: none; overflow: hidden;
+  font-family: var(--font); font-weight: 600; line-height: 1.2; color: #fff; caret-color: var(--accent);
+  background: rgba(10,12,14,.85); border: 0; border-left: 4px solid var(--accent); border-radius: 6px;
+  outline: 2px dashed rgba(255,255,255,.75); outline-offset: 2px;
+  -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+}
+.editbar { position: absolute; z-index: 7; display: flex; gap: 6px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.editbar button { min-height: 38px; padding: 6px 14px; }
+.xbtn {
+  position: absolute; z-index: 8; width: 36px; height: 36px; min-height: 0; padding: 0; border-radius: 50%;
+  background: var(--accent); border: 2px solid #fff; color: #fff; font-size: 22px; line-height: 1; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
+}
+.toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 90px); transform: translateX(-50%); z-index: 50;
+  background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-weight: 600; font-size: 14px; max-width: 90vw; text-align: center;
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="row top">
+    <h1>Frame Notes</h1>
+    <div class="file" id="fileName">No video open</div>
+    <div class="status" id="status"></div>
+  </div>
+  <div class="row">
+    <label class="btn" for="pick">Open video</label>
+    <select id="fps" aria-label="Frames per second">
+      <option value="24">24 fps</option><option value="25">25 fps</option><option value="30" selected>30 fps</option><option value="60">60 fps</option>
+    </select>
+    <span class="grow" style="flex:1"></span>
+    <button id="send" class="primary" disabled>Send to Claude</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="empty" id="empty">
+      <strong>Open a video to start</strong>
+      <div>Pause on a frame. Pen circles, Text drops a note where you drag, Select moves or deletes a mark. Pinch to zoom.</div>
+      <label class="btn primary" for="pick">Open video</label>
+    </div>
+    <div class="frame" id="frame" hidden>
+      <video id="video" playsinline muted preload="auto"></video>
+      <canvas id="ink"></canvas>
+      <button id="selX" class="xbtn" hidden aria-label="Delete selected mark">&times;</button>
+      <textarea id="editor" class="editor" hidden aria-label="Note text" rows="1"></textarea>
+      <div class="editbar" id="editbar" hidden>
+        <button id="editDelete">Delete</button>
+        <button id="editDone" class="primary">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="back" aria-label="Previous frame" disabled>&#9664;</button>
+    <button id="play" aria-label="Play" disabled>&#9654;</button>
+    <button id="fwd" aria-label="Next frame" disabled>&#9654;|</button>
+    <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="Frame" disabled>
+    <button id="fit" hidden aria-label="Zoom out">1&times;</button>
+    <div class="counter" id="counter">F 0<br><small>0.00 s</small></div>
+  </div>
+
+  <div class="row tools">
+    <button id="toolPen" aria-pressed="true">Pen</button>
+    <button id="toolText" aria-pressed="false">Text</button>
+    <button id="toolSelect" aria-pressed="false">Select</button>
+    <button class="swatch" data-c="#ff4d4d" aria-pressed="true" aria-label="Red"><i style="background:#ff4d4d"></i></button>
+    <button class="swatch" data-c="#ffd23f" aria-pressed="false" aria-label="Yellow"><i style="background:#ffd23f"></i></button>
+    <button class="swatch" data-c="#ffffff" aria-pressed="false" aria-label="White"><i style="background:#ffffff"></i></button>
+    <span class="grow"></span>
+    <button id="undo" disabled>Undo</button>
+    <button id="clear">Clear</button>
+  </div>
+
+  <div class="notes" id="notes"><span class="label">No notes yet</span></div>
+  <input type="file" id="pick" accept="video/*,.mp4,.mov,.m4v" hidden>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const video = $('video'), ink = $('ink'), frameEl = $('frame'), stage = $('stage'), ed = $('editor');
+  const ctx = ink.getContext('2d');
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+  const S = {
+    name: '', fps: 30, total: 0, frame: 0,
+    tool: 'pen', color: '#ff4d4d',
+    notes: new Map(),          // frame -> { strokes: [{id,c,p:[[x,y]..]}], texts: [{id,x,y,w,h,f,s,c}] }
+    hist: [],                  // undo steps: { f, state }
+    sel: null,                 // { kind: 'stroke'|'text', ref }
+    edit: null,                // { t, f, isNew }
+    g: null,                   // current one finger gesture
+    ptrs: new Map(), pinch: null, afterPinch: false,
+    z: { s: 1, x: 0, y: 0 },
+  };
+
+  // ---------- small UI helpers ----------
+  const setStatus = (t, cls = '') => { const s = $('status'); s.textContent = t; s.className = 'status ' + cls; };
+  let toastT = null;
+  function toast(t, ms = 2600) { const el = $('toast'); el.textContent = t; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, ms); }
+
+  // ---------- storage on this phone (IndexedDB) ----------
+  let dbp = null;
+  function idb() {
+    if (!dbp) dbp = new Promise((res, rej) => {
+      const r = indexedDB.open('frame-notes', 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore('notes'); r.result.createObjectStore('media'); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    return dbp;
+  }
+  async function idbGet(store, key) { const db = await idb(); return new Promise((res, rej) => { const q = db.transaction(store).objectStore(store).get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+  async function idbPut(store, key, val) { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).put(val, key); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+
+  let saveT = null;
+  function save() {
+    if (!S.name) return;
+    setStatus('Saving…');
+    clearTimeout(saveT);
+    saveT = setTimeout(saveNow, 300);
+  }
+  async function saveNow() {
+    clearTimeout(saveT);
+    if (!S.name) return;
+    const notes = {};
+    for (const [f, n] of S.notes) if (n.strokes.length || n.texts.length) notes[f] = n;
+    try { await idbPut('notes', S.name, { name: S.name, fps: S.fps, notes, updatedAt: new Date().toISOString() }); setStatus('Saved', 'ok'); }
+    catch (e) { setStatus('Not saved: ' + (e && e.name || 'storage error'), 'warn'); }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { syncEdit(); saveNow(); } });
+  window.addEventListener('pagehide', () => { syncEdit(); saveNow(); });
+
+  // ---------- opening a video ----------
+  $('pick').addEventListener('change', e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) openFile(f, true); });
+  async function openFile(file, remember) {
+    if (S.edit) commitEdit();
+    await saveNow();
+    S.name = file.name; S.notes = new Map(); S.hist = []; S.sel = null;
+    $('fileName').textContent = file.name;
+    try {
+      const rec = await idbGet('notes', file.name);
+      if (rec && rec.notes) for (const [f, n] of Object.entries(rec.notes)) S.notes.set(+f, { strokes: n.strokes || [], texts: n.texts || [] });
+      if (rec && rec.fps) { S.fps = rec.fps; $('fps').value = String(rec.fps); }
+    } catch (e) {}
+    if (video.src) URL.revokeObjectURL(video.src);
+    video.src = URL.createObjectURL(file);
+    video.load();
+    if (remember) idbPut('media', 'last', { name: file.name, blob: file }).catch(() => {});
+    renderNotes();
+  }
+  video.addEventListener('loadedmetadata', () => {
+    $('empty').hidden = true; frameEl.hidden = false;
+    setTotal();
+    ['back', 'play', 'fwd', 'scrub', 'send'].forEach(id => $(id).disabled = false);
+    layout(); goTo(0);
+    setStatus(S.notes.size ? 'Saved' : 'Ready', 'ok');
+  });
+  function setTotal() { S.total = Math.max(0, Math.floor(video.duration * S.fps) - 1); $('scrub').max = S.total; }
+  // reopen the last video on start, so a review picks up where it stopped
+  (async () => {
+    try { const m = await idbGet('media', 'last'); if (m && m.blob) openFile(new File([m.blob], m.name, { type: m.blob.type || 'video/mp4' }), false); }
+    catch (e) {}
+  })();
+
+  // ---------- frames ----------
+  const frameOf = t => Math.min(S.total, Math.max(0, Math.floor(t * S.fps + 1e-3)));
+  function goTo(f) {
+    f = Math.min(S.total, Math.max(0, Math.round(f)));
+    if (S.edit) commitEdit();
+    S.sel = null;
+    if (!video.paused) video.pause();
+    S.frame = f; video.currentTime = (f + 0.5) / S.fps;
+    updateCounter(); draw();
+  }
+  function updateCounter() {
+    const c = $('counter'); c.textContent = '';
+    c.append('F ' + S.frame, document.createElement('br'));
+    const sm = document.createElement('small'); sm.textContent = (S.frame / S.fps).toFixed(2) + ' s'; c.append(sm);
+    $('scrub').value = S.frame; updateUndo(); renderNotes();
+  }
+  video.addEventListener('timeupdate', () => { if (!video.paused) { S.frame = frameOf(video.currentTime); updateCounter(); } });
+  video.addEventListener('seeked', draw);
+  video.addEventListener('play', () => {
+    if (S.edit || S.g) { video.pause(); return; }        // never move off a frame while marking it
+    $('play').innerHTML = '&#10074;&#10074;'; S.sel = null; draw();
+  });
+  video.addEventListener('pause', () => { $('play').innerHTML = '&#9654;'; draw(); });
+  $('play').addEventListener('click', () => {
+    if (S.edit) commitEdit();
+    if (video.paused) { S.sel = null; video.play().catch(() => {}); }
+    else { video.pause(); goTo(frameOf(video.currentTime)); }
+  });
+  $('back').addEventListener('click', () => goTo(S.frame - 1));
+  $('fwd').addEventListener('click', () => goTo(S.frame + 1));
+  $('scrub').addEventListener('input', e => goTo(+e.target.value));
+  $('fps').addEventListener('change', e => { S.fps = +e.target.value; if (video.duration) { setTotal(); goTo(frameOf(video.currentTime)); } save(); });
+
+  // ---------- layout and zoom ----------
+  function layout() {
+    if (!video.videoWidth) return;
+    const r = stage.getBoundingClientRect(), ar = video.videoWidth / video.videoHeight;
+    let w = r.width, h = w / ar;
+    if (h > r.height) { h = r.height; w = h * ar; }
+    if (Math.floor(w) === frameEl.offsetWidth && Math.floor(h) === frameEl.offsetHeight && ink.width) { draw(); return; }   // same size: keep zoom
+    frameEl.style.width = Math.floor(w) + 'px'; frameEl.style.height = Math.floor(h) + 'px';
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    ink.width = Math.floor(w * dpr); ink.height = Math.floor(h * dpr);
+    resetZoom(); placeEditor(); draw();
+  }
+  window.addEventListener('resize', () => { if (!S.edit) layout(); });
+  function applyZoom() {
+    const W = frameEl.offsetWidth, H = frameEl.offsetHeight, z = S.z;
+    z.s = Math.min(6, Math.max(1, z.s));
+    z.x = Math.min(0, Math.max(W - W * z.s, z.x)); z.y = Math.min(0, Math.max(H - H * z.s, z.y));
+    frameEl.style.transform = z.s > 1.001 ? `translate(${z.x}px,${z.y}px) scale(${z.s})` : '';
+    $('fit').hidden = z.s <= 1.001;
+  }
+  function resetZoom() { S.z = { s: 1, x: 0, y: 0 }; applyZoom(); }
+  $('fit').addEventListener('click', resetZoom);
+
+  // ---------- notes model and undo ----------
+  const cur = () => S.notes.get(S.frame);
+  const ensure = f => { let n = S.notes.get(f); if (!n) { n = { strokes: [], texts: [] }; S.notes.set(f, n); } return n; };
+  const stateOf = f => { const n = S.notes.get(f); return JSON.stringify(n ? { strokes: n.strokes, texts: n.texts } : { strokes: [], texts: [] }); };
+  function checkpoint(f = S.frame) { S.hist.push({ f, state: stateOf(f) }); if (S.hist.length > 300) S.hist.shift(); updateUndo(); }
+  function dropIfUnchanged(f) { const h = S.hist[S.hist.length - 1]; if (h && h.f === f && h.state === stateOf(f)) S.hist.pop(); updateUndo(); }
+  function updateUndo() { $('undo').disabled = !S.hist.some(h => h.f === S.frame); }
+  function changed(f = S.frame) {
+    const n = S.notes.get(f); if (n && !n.strokes.length && !n.texts.length) S.notes.delete(f);
+    renderNotes(); updateUndo(); draw(); save(); if (typeof resetSend === 'function' && prepared) resetSend();
+  }
+  $('undo').addEventListener('click', () => {
+    if (S.edit) commitEdit();
+    let i = S.hist.length - 1; while (i >= 0 && S.hist[i].f !== S.frame) i--;
+    if (i < 0) return updateUndo();
+    const h = S.hist.splice(i, 1)[0], v = JSON.parse(h.state), n = ensure(h.f);
+    n.strokes = v.strokes; n.texts = v.texts; S.sel = null;
+    changed(h.f);
+  });
+  let armT = null;
+  $('clear').addEventListener('click', () => {
+    const b = $('clear'), n = cur();
+    if (!n) return;
+    if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to clear'; b.classList.add('primary'); armT = setTimeout(disarm, 2500); return; }
+    disarm(); if (S.edit) commitEdit();
+    checkpoint(); n.strokes = []; n.texts = []; S.sel = null; changed();
+  });
+  function disarm() { clearTimeout(armT); const b = $('clear'); delete b.dataset.armed; b.textContent = 'Clear'; b.classList.remove('primary'); }
+
+  // ---------- drawing the marks ----------
+  const FONT = '600 {px}px -apple-system, "Helvetica Neue", Arial, sans-serif';
+  function wrap(g, text, maxW) {
+    const out = [];
+    for (const para of String(text).split('\n')) {
+      let line = '';
+      for (const w of para.split(' ')) {
+        const test = line ? line + ' ' + w : w;
+        if (g.measureText(test).width > maxW && line) { out.push(line); line = w; } else line = test;
+      }
+      out.push(line);
+    }
+    return out;
+  }
+  // geometry of one note on a surface W x H (canvas px)
+  function noteBox(g, t, W, H) {
+    const fs = t.f * W, pad = fs * 0.4, edge = Math.max(3, fs * 0.2);
+    g.font = FONT.replace('{px}', fs);
+    const w = Math.min(t.w * W, W);
+    const lines = wrap(g, t.s, w - pad * 2 - edge);
+    const h = Math.max((t.h || 0) * H, lines.length * fs * 1.2 + pad * 2);
+    const x = Math.min(Math.max(0, t.x * W), W - w), y = Math.min(Math.max(0, t.y * H), H - h);
+    return { x, y, w, h, lines, fs, pad, edge };
+  }
+  function paintNote(g, t, W, H) {
+    const b = noteBox(g, t, W, H);
+    g.fillStyle = 'rgba(10,12,14,.85)';
+    g.beginPath(); g.roundRect ? g.roundRect(b.x, b.y, b.w, b.h, b.fs * 0.3) : g.rect(b.x, b.y, b.w, b.h); g.fill();
+    g.fillStyle = t.c; g.fillRect(b.x, b.y, b.edge, b.h);
+    g.fillStyle = '#fff'; g.textBaseline = 'top';
+    b.lines.forEach((l, i) => g.fillText(l, b.x + b.edge + b.pad, b.y + b.pad + i * b.fs * 1.2));
+  }
+  function paintStroke(g, s, W, H) {
+    if (!s.p.length) return;
+    g.strokeStyle = s.c; g.lineWidth = Math.max(2, W * 0.008); g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(s.p[0][0] * W, s.p[0][1] * H);
+    for (let i = 1; i < s.p.length; i++) g.lineTo(s.p[i][0] * W, s.p[i][1] * H);
+    if (s.p.length === 1) g.lineTo(s.p[0][0] * W + 0.5, s.p[0][1] * H);
+    g.stroke();
+  }
+  function paintAll(g, W, H, n, skip) {
+    if (!n) return;
+    for (const s of n.strokes) paintStroke(g, s, W, H);
+    for (const t of n.texts) if (t !== skip) paintNote(g, t, W, H);
+  }
+  function draw() {
+    const W = ink.width, H = ink.height;
+    ctx.clearRect(0, 0, W, H);
+    $('selX').hidden = true;
+    if (!video.paused || !video.videoWidth) return;          // marks show only on their own paused frame
+    paintAll(ctx, W, H, cur(), S.edit && S.edit.t);
+    const g = S.g;
+    if (g && g.type === 'draw') paintStroke(ctx, g.stroke, W, H);
+    if (g && g.type === 'box') {
+      ctx.save(); ctx.setLineDash([W * 0.015, W * 0.01]); ctx.strokeStyle = S.color; ctx.lineWidth = Math.max(2, W * 0.004);
+      const [a, b] = [g.a, g.b]; ctx.strokeRect(Math.min(a[0], b[0]) * W, Math.min(a[1], b[1]) * H, Math.abs(b[0] - a[0]) * W, Math.abs(b[1] - a[1]) * H);
+      ctx.restore();
+    }
+    const bb = S.sel && selBounds();
+    if (bb) {
+      const pad = W * 0.012;
+      ctx.save(); ctx.setLineDash([W * 0.012, W * 0.008]); ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, W * 0.004);
+      ctx.strokeRect(bb.x - pad, bb.y - pad, bb.w + pad * 2, bb.h + pad * 2); ctx.restore();
+      if (!(g && g.type === 'move' && g.moved)) {
+        const k = frameEl.offsetWidth / W, X = $('selX');
+        X.style.left = Math.max(0, Math.min(frameEl.offsetWidth - 36, (bb.x + bb.w + pad) * k - 18)) + 'px';
+        X.style.top = Math.max(0, (bb.y - pad) * k - 18) + 'px';
+        X.style.transform = `scale(${1 / S.z.s})`;
+        X.hidden = false;
+      }
+    } else if (S.sel) S.sel = null;
+  }
+
+  // ---------- hit tests (canvas px) ----------
+  const pt = e => { const r = ink.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; };
+  function hitNote(p) {
+    const n = cur(); if (!n) return null;
+    const W = ink.width, H = ink.height, X = p[0] * W, Y = p[1] * H, slop = W * 0.02;
+    for (let i = n.texts.length - 1; i >= 0; i--) {
+      const b = noteBox(ctx, n.texts[i], W, H);
+      if (X >= b.x - slop && X <= b.x + b.w + slop && Y >= b.y - slop && Y <= b.y + b.h + slop) return n.texts[i];
+    }
+    return null;
+  }
+  function hitStroke(p, tight) {
+    const n = cur(); if (!n) return null;
+    const W = ink.width, H = ink.height, X = p[0] * W, Y = p[1] * H;
+    let best = null, bestD = Math.max(W * 0.05, 22 * (window.devicePixelRatio || 1)) / S.z.s * (tight ? 0.45 : 1);
+    for (const s of n.strokes) for (let i = 0; i < s.p.length; i++) {
+      const a = s.p[i], b = s.p[Math.min(i + 1, s.p.length - 1)];
+      const ax = a[0] * W, ay = a[1] * H, dx = b[0] * W - ax, dy = b[1] * H - ay, L = dx * dx + dy * dy;
+      const u = L ? Math.max(0, Math.min(1, ((X - ax) * dx + (Y - ay) * dy) / L)) : 0;
+      const d = Math.hypot(X - ax - u * dx, Y - ay - u * dy);
+      if (d <= bestD) { bestD = d; best = s; }
+    }
+    return best;
+  }
+  function selBounds() {
+    const n = cur(), W = ink.width, H = ink.height; if (!n || !S.sel) return null;
+    if (S.sel.kind === 'stroke') {
+      if (!n.strokes.includes(S.sel.ref)) return null;
+      const xs = S.sel.ref.p.map(q => q[0] * W), ys = S.sel.ref.p.map(q => q[1] * H);
+      const x = Math.min(...xs), y = Math.min(...ys); return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+    }
+    if (!n.texts.includes(S.sel.ref)) return null;
+    const b = noteBox(ctx, S.sel.ref, W, H); return { x: b.x, y: b.y, w: b.w, h: b.h };
+  }
+  $('selX').addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
+    const n = cur(); if (!n || !S.sel) return;
+    const list = S.sel.kind === 'stroke' ? n.strokes : n.texts, i = list.indexOf(S.sel.ref);
+    if (i >= 0) { checkpoint(); list.splice(i, 1); }
+    S.sel = null; changed();
+  });
+
+  // ---------- touch on the frame ----------
+  // One finger: Pen draws. Text drags out a new note, or moves a note (drag) / edits it (tap).
+  // Select picks a mark (tap) or moves it (drag). Two fingers: pinch zoom and pan, from any tool.
+  const MOVE_PX = 6;
+  ink.addEventListener('pointerdown', e => {
+    if (!video.videoWidth) return;
+    e.preventDefault();
+    S.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { ink.setPointerCapture(e.pointerId); } catch (err) {}
+    if (S.ptrs.size === 2) return startPinch();
+    if (S.ptrs.size > 2 || S.pinch || S.afterPinch) return;
+    if (S.edit) { commitEdit(); S.g = { type: 'none' }; return; }        // a tap outside finishes the note
+    if (!video.paused) { video.pause(); goTo(frameOf(video.currentTime)); S.g = { type: 'none' }; return; }
+    const p = pt(e), c = { x: e.clientX, y: e.clientY };
+    if (S.tool === 'pen') {
+      S.sel = null;
+      S.g = { type: 'draw', stroke: { id: newId(), c: S.color, p: [p.map(v => +v.toFixed(4))] } };
+    } else if (S.tool === 'text') {
+      S.sel = null;
+      const t = hitNote(p);
+      S.g = t ? { type: 'move', kind: 'text', ref: t, c0: c, p0: p, orig: [t.x, t.y], moved: false, tapEdits: true }
+              : { type: 'box', a: p, b: p, c0: c };
+    } else {
+      // a tap right on a line means the line, even where a note's edge is close by
+      const onLine = hitStroke(p, true), t = onLine ? null : hitNote(p), s = onLine || (t ? null : hitStroke(p));
+      if (t || s) {
+        S.sel = { kind: t ? 'text' : 'stroke', ref: t || s };
+        S.g = { type: 'move', kind: S.sel.kind, ref: S.sel.ref, c0: c, p0: p, orig: t ? [t.x, t.y] : s.p.map(q => q.slice()), moved: false };
+      } else { S.sel = null; S.g = { type: 'none' }; }
+    }
+    draw();
+  });
+  ink.addEventListener('pointermove', e => {
+    if (!S.ptrs.has(e.pointerId)) return;
+    e.preventDefault();
+    S.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (S.pinch) { if (S.ptrs.size >= 2) movePinch(); return; }
+    const g = S.g; if (!g) return;
+    if (g.type === 'draw') {
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      for (const ev of (evs.length ? evs : [e])) g.stroke.p.push(pt(ev).map(v => +v.toFixed(4)));
+      draw();
+    } else if (g.type === 'box') {
+      g.b = pt(e).map(v => Math.min(1, Math.max(0, v))); draw();
+    } else if (g.type === 'move') {
+      if (!g.moved && Math.hypot(e.clientX - g.c0.x, e.clientY - g.c0.y) < MOVE_PX) return;
+      if (!g.moved) { g.moved = true; checkpoint(); }
+      const p = pt(e), dx = p[0] - g.p0[0], dy = p[1] - g.p0[1];
+      if (g.kind === 'text') { g.ref.x = +Math.min(0.98, Math.max(0, g.orig[0] + dx)).toFixed(4); g.ref.y = +Math.min(0.98, Math.max(0, g.orig[1] + dy)).toFixed(4); }
+      else g.ref.p = g.orig.map(q => [+(q[0] + dx).toFixed(4), +(q[1] + dy).toFixed(4)]);
+      draw();
+    }
+  });
+  function liftPointer(e) {
+    S.ptrs.delete(e.pointerId);
+    if (S.pinch) { if (S.ptrs.size < 2) { S.pinch = null; S.afterPinch = S.ptrs.size > 0; } return true; }
+    if (S.afterPinch) { if (!S.ptrs.size) S.afterPinch = false; return true; }
+    return false;
+  }
+  ink.addEventListener('pointerup', e => {
+    if (!S.ptrs.has(e.pointerId)) return;
+    if (liftPointer(e)) return;
+    const g = S.g; S.g = null; if (!g) return;
+    if (g.type === 'draw') {
+      const s = g.stroke;
+      if (s.p.length > 2) { const step = Math.ceil(s.p.length / 300); s.p = s.p.filter((_, i) => i % step === 0 || i === s.p.length - 1); }
+      checkpoint(); ensure(S.frame).strokes.push(s); changed();
+    } else if (g.type === 'box') {
+      const { a, b } = g;
+      let x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
+      if (Math.hypot(e.clientX - g.c0.x, e.clientY - g.c0.y) < MOVE_PX * 2 || w < 0.08) { w = Math.min(0.6, 0.5 / S.z.s); h = 0; x = Math.min(a[0], 1 - w); }
+      const t = { id: newId(), x: +x.toFixed(4), y: +y.toFixed(4), w: +w.toFixed(4), h: +h.toFixed(4), f: +defaultF().toFixed(4), s: '', c: S.color };
+      startEdit(t, true);                   // inside the finger lift, so iPhone opens the keyboard
+    } else if (g.type === 'move') {
+      if (g.moved) changed();
+      else if (g.tapEdits) startEdit(g.ref, false);
+      else draw();
+    } else draw();
+  });
+  ink.addEventListener('pointercancel', e => {
+    if (!S.ptrs.has(e.pointerId)) return;
+    if (liftPointer(e)) return;
+    cancelGesture();
+  });
+  function cancelGesture() {
+    const g = S.g; S.g = null; if (!g) return;
+    if (g.type === 'move' && g.moved) {
+      if (g.kind === 'text') { g.ref.x = g.orig[0]; g.ref.y = g.orig[1]; } else g.ref.p = g.orig;
+      dropIfUnchanged(S.frame);
+    }
+    draw();
+  }
+  function startPinch() {
+    cancelGesture();
+    const r = frameEl.getBoundingClientRect(), z = S.z, [a, b] = [...S.ptrs.values()];
+    const O = { x: r.left - z.x, y: r.top - z.y }, m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    S.pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: z.s, O, c: { x: (m.x - O.x - z.x) / z.s, y: (m.y - O.y - z.y) / z.s } };
+  }
+  function movePinch() {
+    const P = S.pinch, [a, b] = [...S.ptrs.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y) || 1, m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    S.z.s = Math.min(6, Math.max(1, P.s0 * d / P.d0));
+    S.z.x = m.x - P.O.x - P.c.x * S.z.s; S.z.y = m.y - P.O.y - P.c.y * S.z.s;
+    applyZoom(); placeEditor(); draw();
+  }
+
+  // ---------- writing a note in place ----------
+  const defaultF = () => { const w = frameEl.offsetWidth || 360; return Math.max(16, w * 0.045) / w; };
+  function placeEditor() {
+    if (!S.edit) return;
+    const t = S.edit.t, W = frameEl.offsetWidth, H = frameEl.offsetHeight, fs = t.f * W;
+    const w = Math.min(t.w * W, W), x = Math.min(Math.max(0, t.x * W), W - w);
+    ed.style.fontSize = fs + 'px'; ed.style.padding = (fs * 0.4) + 'px'; ed.style.borderLeftColor = t.c;
+    ed.style.width = w + 'px'; ed.style.left = x + 'px';
+    ed.style.height = 'auto';
+    const h = Math.max((t.h || 0) * H, ed.scrollHeight, fs * 2);
+    const y = Math.min(Math.max(0, t.y * H), Math.max(0, H - h));
+    ed.style.top = y + 'px'; ed.style.height = h + 'px';
+    const bar = $('editbar'), bh = bar.offsetHeight || 48, bw = bar.offsetWidth || 170;
+    let by = y + h + 8; if (by + bh > H) by = Math.max(0, y - bh - 8);
+    bar.style.top = by + 'px'; bar.style.left = Math.max(4, Math.min(W - bw - 4, x)) + 'px';
+  }
+  function startEdit(t, isNew) {
+    if (S.edit) commitEdit();
+    S.sel = null; checkpoint();
+    S.edit = { t, f: S.frame, isNew };
+    ed.value = t.s; ed.hidden = false; $('editbar').hidden = false;
+    placeEditor(); draw();
+    ed.focus({ preventScroll: true });
+    try { ed.setSelectionRange(ed.value.length, ed.value.length); } catch (e) {}
+    requestAnimationFrame(placeEditor);
+  }
+  // copy the box's words into the note on every keystroke, so nothing waits on Done
+  function syncEdit() {
+    if (!S.edit) return;
+    const { t, f } = S.edit, n = ensure(f), val = ed.value.replace(/\s+$/, ''), i = n.texts.indexOf(t);
+    t.s = val;
+    if (val && i < 0) n.texts.push(t);
+    if (!val && i >= 0) n.texts.splice(i, 1);
+    if (!n.strokes.length && !n.texts.length) S.notes.delete(f);
+    renderNotes(); save(); if (prepared) resetSend();
+  }
+  function commitEdit() {
+    if (!S.edit) return;
+    syncEdit();
+    const f = S.edit.f; S.edit = null;
+    ed.hidden = true; $('editbar').hidden = true; ed.blur();
+    dropIfUnchanged(f); draw(); renderNotes();
+    setTimeout(layout, 350);
+  }
+  ed.addEventListener('input', () => { syncEdit(); placeEditor(); });
+  ed.addEventListener('blur', () => setTimeout(() => { if (S.edit && document.activeElement !== ed) commitEdit(); }, 120));
+  $('editDone').addEventListener('pointerdown', e => { e.preventDefault(); commitEdit(); });
+  $('editDelete').addEventListener('pointerdown', e => { e.preventDefault(); if (!S.edit) return; ed.value = ''; commitEdit(); });
+
+  // ---------- tools ----------
+  function setTool(t) {
+    if (S.edit) commitEdit();
+    S.tool = t; S.sel = null;
+    for (const [id, name] of [['toolPen', 'pen'], ['toolText', 'text'], ['toolSelect', 'select']]) $(id).setAttribute('aria-pressed', String(t === name));
+    draw();
+  }
+  $('toolPen').addEventListener('click', () => setTool('pen'));
+  $('toolText').addEventListener('click', () => setTool('text'));
+  $('toolSelect').addEventListener('click', () => setTool('select'));
+  document.querySelectorAll('.swatch').forEach(b => b.addEventListener('click', () => {
+    S.color = b.dataset.c; document.querySelectorAll('.swatch').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    if (S.sel) { checkpoint(); S.sel.ref.c = S.color; changed(); }     // recolour the selected mark
+  }));
+
+  // ---------- notes strip ----------
+  function renderNotes() {
+    const box = $('notes'); box.textContent = '';
+    const frames = [...S.notes.keys()].filter(f => { const n = S.notes.get(f); return n.strokes.length || n.texts.length; }).sort((a, b) => a - b);
+    const l = document.createElement('span'); l.className = 'label';
+    l.textContent = frames.length ? frames.length + (frames.length === 1 ? ' marked frame' : ' marked frames') : (S.name ? 'No notes on this video yet' : 'No notes yet');
+    box.append(l);
+    for (const f of frames) {
+      const n = S.notes.get(f), b = document.createElement('button');
+      b.className = 'chip' + (f === S.frame ? ' here' : '');
+      b.append('F ' + f);
+      if (n.texts[0]) { const sp = document.createElement('span'); sp.textContent = n.texts[0].s; b.append(sp); }
+      b.addEventListener('click', () => goTo(f));
+      box.append(b);
+    }
+    const here = box.querySelector('.here'); if (here) here.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
+
+  // ---------- Send to Claude: one notes file with every marked frame as a picture ----------
+  function seekExact(f) {
+    return new Promise(res => {
+      const done = () => { video.removeEventListener('seeked', done); clearTimeout(to); res(); };
+      const to = setTimeout(done, 4000);
+      video.addEventListener('seeked', done);
+      video.currentTime = (f + 0.5) / S.fps;
+    });
+  }
+  // Two taps on purpose: iPhone only opens the share sheet straight from a tap, and preparing the
+  // pictures takes a moment, so the first tap prepares and the second tap shares.
+  let prepared = null;
+  const sendBtn = $('send');
+  function resetSend() { prepared = null; sendBtn.textContent = 'Send to Claude'; }
+  sendBtn.addEventListener('click', () => {
+    if (prepared) return shareFile(prepared);
+    prepare();
+  });
+  function shareFile(file) {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: 'Frame Notes' })
+        .then(() => { toast('Saved. Choose iCloud Drive › Frame Notes so Claude can read it.', 4000); resetSend(); })
+        .catch(e => { if (e && e.name === 'AbortError') return; download(file); });
+    } else download(file);
+  }
+  function download(file) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.append(a); a.click(); a.remove();
+    toast('Downloaded ' + file.name); resetSend();
+  }
+  async function prepare() {
+    if (S.edit) commitEdit();
+    await saveNow();
+    const frames = [...S.notes.keys()].filter(f => { const n = S.notes.get(f); return n.strokes.length || n.texts.length; }).sort((a, b) => a - b);
+    if (!frames.length) return toast('No marks yet. Circle or write on a frame first.');
+    sendBtn.disabled = true; const back = S.frame;
+    try {
+      video.pause();
+      const W = video.videoWidth, H = video.videoHeight, c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'), out = [];
+      for (const [i, f] of frames.entries()) {
+        sendBtn.textContent = `Preparing ${i + 1}/${frames.length}`;
+        await seekExact(f);
+        g.drawImage(video, 0, 0, W, H);
+        const n = S.notes.get(f);
+        paintAll(g, W, H, n, null);
+        g.font = `600 ${Math.round(W * 0.03)}px ui-monospace, Menlo, monospace`; g.textBaseline = 'middle';
+        const tag = `F ${f}  ${(f / S.fps).toFixed(2)} s`, tw = g.measureText(tag).width;
+        g.fillStyle = 'rgba(0,0,0,.65)'; g.fillRect(W * 0.02, H * 0.012, tw + W * 0.03, W * 0.05);
+        g.fillStyle = '#fff'; g.fillText(tag, W * 0.035, H * 0.012 + W * 0.025);
+        out.push({ frame: f, timeSec: +(f / S.fps).toFixed(3), texts: n.texts.map(t => ({ text: t.s, x: t.x, y: t.y, w: t.w, color: t.c })),
+                   strokes: n.strokes.map(s => ({ color: s.c, points: s.p })), image: c.toDataURL('image/jpeg', 0.85) });
+      }
+      const d = new Date(), pad = v => String(v).padStart(2, '0');
+      const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+      const base = S.name.replace(/\.[^.]+$/, '');
+      prepared = new File([JSON.stringify({ app: 'frame-notes', version: 1, video: S.name, fps: S.fps, videoW: W, videoH: H, exportedAt: d.toISOString(), frames: out })],
+        `${stamp}-${base}-notes.json`, { type: 'application/json' });
+      sendBtn.textContent = `Save ${frames.length} frame${frames.length === 1 ? '' : 's'} ›`;
+      toast('Ready. Tap the red button again to save the notes file.', 3500);
+    } catch (e) {
+      resetSend(); toast('Could not prepare: ' + (e && e.message || e));
+    } finally {
+      sendBtn.disabled = false; goTo(back);
+    }
+  }
+
+  // test hook for the desktop harness
+  window.FN = { S, openFile, goTo, setTool };
+})();
+</script>
+</body>
+</html>
